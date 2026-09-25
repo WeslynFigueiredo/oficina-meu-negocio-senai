@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Estilização customizada em CSS: Otimizada para Single Screen no PC e Responsiva no Celular
+# Estilização customizada em CSS: Dynamic Cards, Single Screen no PC e Responsiva no Celular
 st.markdown("""
 <style>
     /* Transição suave entre etapas */
@@ -130,7 +130,7 @@ st.markdown("""
         margin-bottom: 0.8rem;
     }
 
-    /* Cards de Resumo */
+    /* Cards de Resumo da Ficha */
     .review-item {
         background-color: #F8FAFC;
         border-left: 4px solid #0055a5;
@@ -150,6 +150,70 @@ st.markdown("""
         font-weight: 600;
         color: #1E293B;
         margin-top: 0.15rem;
+    }
+
+    /* Cards Dinâmicos de Resultado por Viabilidade */
+    .result-card-viavel {
+        background-color: #F0FDF4;
+        border: 2px solid #2A9D8F;
+        border-radius: 14px;
+        padding: 1.2rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 16px rgba(42, 157, 143, 0.12);
+    }
+    .result-card-atencao {
+        background-color: #FFFBEB;
+        border: 2px solid #F4A261;
+        border-radius: 14px;
+        padding: 1.2rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 16px rgba(244, 162, 97, 0.12);
+    }
+    .result-card-inviavel {
+        background-color: #FEF2F2;
+        border: 2px solid #E63946;
+        border-radius: 14px;
+        padding: 1.2rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 16px rgba(230, 57, 70, 0.12);
+    }
+
+    /* Banner/Alerta Customizado */
+    .status-alert-viavel {
+        background-color: #2A9D8F;
+        color: #FFFFFF;
+        padding: 0.65rem 0.9rem;
+        border-radius: 10px;
+        font-weight: 700;
+        font-size: 0.92rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .status-alert-atencao {
+        background-color: #F4A261;
+        color: #1E293B;
+        padding: 0.65rem 0.9rem;
+        border-radius: 10px;
+        font-weight: 700;
+        font-size: 0.92rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .status-alert-inviavel {
+        background-color: #E63946;
+        color: #FFFFFF;
+        padding: 0.65rem 0.9rem;
+        border-radius: 10px;
+        font-weight: 700;
+        font-size: 0.92rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     /* Botões Otimizados */
@@ -205,6 +269,8 @@ if "preco_canal" not in st.session_state:
     st.session_state.preco_canal = ""
 if "relatorio" not in st.session_state:
     st.session_state.relatorio = None
+if "relatorio_status" not in st.session_state:
+    st.session_state.relatorio_status = "ATENCAO"
 
 # Topo / Header Fixo da Aplicação
 st.markdown("""
@@ -226,13 +292,44 @@ if not api_key or api_key == "SUA_CHAVE_AQUI":
     if api_key_input:
         api_key = api_key_input.strip()
 
+# Função para extrair o status padronizado e limpar o texto do relatório
+def extrair_status_e_limpar_relatorio(texto_relatorio):
+    status = "ATENCAO"
+    match = re.search(r'\[STATUS:\s*(VIAVEL|ATENCAO|INVIAVEL)\]', texto_relatorio, re.IGNORECASE)
+    if match:
+        status = match.group(1).upper()
+    else:
+        # Fallback de segurança baseado no conteúdo textual
+        texto_upper = texto_relatorio.upper()
+        if any(k in texto_upper for k in ["INVIÁVEL", "INVIAVEL", "REVER PROPOSTA", "DADOS INSUFICIENTES"]):
+            status = "INVIAVEL"
+        elif any(k in texto_upper for k in ["ALTA VIABILIDADE", "VIAVEL", "VIÁVEL"]):
+            status = "VIAVEL"
+        else:
+            status = "ATENCAO"
+            
+    texto_limpo = re.sub(r'\[STATUS:\s*(VIAVEL|ATENCAO|INVIAVEL)\]\s*\n?', '', texto_relatorio, flags=re.IGNORECASE).strip()
+    return status, texto_limpo
+
 # Função para chamar a API do Gemini com fallback de modelos e retry em caso de Rate Limit (429)
 def gerar_parecer_gemini(nome_negocio, oferta_problema, cliente, diferencial, preco_canal, api_key_val):
     genai.configure(api_key=api_key_val)
     
     prompt = f"""
-Você é um consultor sênior especialista em empreendedorismo, inovação e modelos de negócios do SENAI.
-Sua função é avaliar fichas simplificadas de plano de negócio preenchidas por alunos durante a oficina ministrada pela instrutora Alene Petrina no evento "Feirão de Empregabilidade 2026".
+Você é um Mentor e Avaliador Técnico de Empreendedorismo sênior do SENAI.
+Sua atuação deve ser extremamente exigente, rigorosa, analítica e sem condescendência.
+Sua função é avaliar fichas de plano de negócio preenchidas por alunos durante a oficina ministrada pela instrutora Alene Petrina no evento "Feirão de Empregabilidade 2026".
+
+DIRETRIZES DE AVALIAÇÃO RIGOROSA:
+1. Se o usuário fornecer respostas vagas, monossilábicas (ex: apenas "ALUNOS", "50", "materiais dinamicos", "vender na internet", "varios") ou genéricas:
+   - A classificação DEVE ser estritamente: "🔴 Inviável / Dados Insuficientes" ou "🟡 Viabilidade Baixa / Requer Ajustes Estruturais".
+   - O diagnóstico DEVE pontuar claramente: "Respostas muito vagas. Falta especificar qual segmento de alunos, canal real de aquisição e estrutura de custos." (ou detalhar explicitamente as lacunas técnicas encontradas).
+   - O status inicial da resposta DEVE ser obrigatoriamente [STATUS: INVIAVEL] ou [STATUS: ATENCAO].
+
+2. A PRIMEIRA LINHA do parecer DEVE começar RIGOROSAMENTE com UMA das seguintes tags padronizadas para parsing:
+   [STATUS: INVIAVEL]
+   [STATUS: ATENCAO]
+   [STATUS: VIAVEL]
 
 Dados do projeto fornecidos pelo aluno:
 1. Nome do Negócio: {nome_negocio}
@@ -241,24 +338,23 @@ Dados do projeto fornecidos pelo aluno:
 4. Diferencial da proposta: {diferencial}
 5. Preço estimado e canal de venda: {preco_canal}
 
-Gere um mini-relatório/parecer didático, encorajador, prático e direto ao ponto (máximo de 10 a 12 linhas no total).
+Gere um relatório/parecer técnico didático e direto (máximo de 10 a 12 linhas).
 
-Responda OBRIGATORIAMENTE no seguinte formato Markdown:
+ESTRUTURA OBRIGATÓRIA DA RESPOSTA (Siga estritamente este layout):
+
+[STATUS: INVIAVEL] ou [STATUS: ATENCAO] ou [STATUS: VIAVEL]
 
 ### 📊 Termômetro de Viabilidade
-[Insira Apenas UMA das opções exatamente como escrito: 🟢 Alta Viabilidade | 🟡 Promissora com Ajustes | 🔴 Rever Proposta]
+[Insira apenas uma opção: 🟢 Alta Viabilidade | 🟡 Viabilidade Baixa / Requer Ajustes Estruturais | 🔴 Inviável / Dados Insuficientes]
 
-### 🔎 Diagnóstico Geral
-[Insira 2 frases resumindo o conceito do negócio e sua viabilidade prática no mercado atual]
+### 🔎 Diagnóstico Honesto
+[Insira de 2 a 3 frases com avaliação técnica rigorosa e direta sobre a viabilidade real da ideia no mercado]
 
-### 💪 Ponto Forte
-- [Insira 1 item destacado com o principal diferencial ou vantagem competitiva do projeto]
+### ⚠️ Pontos Críticos
+- [Insira de 1 a 2 itens destacando os principais riscos de mercado, falhas de especificação ou gargalos do projeto]
 
-### ⚠️ Ponto de Atenção
-- [Insira 1 item destacando o principal desafio, risco ou gargalo a ser superado]
-
-### 🚀 Dica Prática de MVP
-- [Insira 1 ação imediata, simples e de baixíssimo custo para testar a ideia hoje no mundo real]
+### 🚀 Próximo Passo Prático
+- [Insira 1 ação pragmática de validação rápida e de baixo custo para o aluno testar o negócio]
 """
 
     candidate_models = [
@@ -288,7 +384,7 @@ Responda OBRIGATORIAMENTE no seguinte formato Markdown:
 
                 if is_rate_limit:
                     if attempt < max_retries_per_model - 1:
-                        wait_time = 8 + (attempt * 2)  # 8 a 10 segundos
+                        wait_time = 8 + (attempt * 2)
                         st.toast(
                             f"⏳ Muitas ideias sendo analisadas ao mesmo tempo! Aguardando {wait_time}s na fila...", 
                             icon="⏳"
@@ -313,7 +409,7 @@ Responda OBRIGATORIAMENTE no seguinte formato Markdown:
         raise RuntimeError("Não foi possível obter resposta de nenhum dos modelos disponíveis.")
 
 # Função auxiliar para gerar relatório em PDF em memória via ReportLab
-def gerar_pdf_relatorio(nome_negocio, oferta, cliente, diferencial, preco, relatorio_markdown):
+def gerar_pdf_relatorio(nome_negocio, oferta, cliente, diferencial, preco, relatorio_markdown, status="ATENCAO"):
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -390,7 +486,56 @@ def gerar_pdf_relatorio(nome_negocio, oferta, cliente, diferencial, preco, relat
     # Cabeçalho Oficial SENAI
     elements.append(Paragraph("SENAI • Feirão de Empregabilidade 2026", title_style))
     elements.append(Paragraph("Oficina: Meu Negócio | Instrutora: Alene Petrina", subtitle_style))
-    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#003366'), spaceAfter=10))
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#003366'), spaceAfter=8))
+
+    # Faixa / Banner de Status no PDF de acordo com a viabilidade
+    if status == "INVIAVEL":
+        bg_color = colors.HexColor('#FEE2E2')
+        border_color = colors.HexColor('#E63946')
+        text_color = colors.HexColor('#991B1B')
+        banner_title = "🔴 CLASSIFICAÇÃO DA BANCA: INVIÁVEL / DADOS INSUFICIENTES"
+        banner_sub = "A proposta precisa de detalhamento e reestruturação antes de ser testada no mercado."
+    elif status == "VIAVEL":
+        bg_color = colors.HexColor('#E6F4EA')
+        border_color = colors.HexColor('#2A9D8F')
+        text_color = colors.HexColor('#137333')
+        banner_title = "🟢 CLASSIFICAÇÃO DA BANCA: ALTA VIABILIDADE"
+        banner_sub = "Proposta consistente, validada pela banca técnica com alto potencial de mercado."
+    else:  # ATENCAO
+        bg_color = colors.HexColor('#FEF3C7')
+        border_color = colors.HexColor('#F4A261')
+        text_color = colors.HexColor('#B45309')
+        banner_title = "🟡 CLASSIFICAÇÃO DA BANCA: VIABILIDADE BAIXA / REQUER AJUSTES"
+        banner_sub = "Proposta com potencial, mas necessita de ajustes estruturais nos pontos críticos indicados."
+
+    banner_style_title = ParagraphStyle(
+        'BannerTitle',
+        parent=styles['Normal'],
+        fontSize=10,
+        leading=13,
+        textColor=text_color,
+        fontName='Helvetica-Bold'
+    )
+    banner_style_sub = ParagraphStyle(
+        'BannerSub',
+        parent=styles['Normal'],
+        fontSize=8.5,
+        leading=11,
+        textColor=text_color,
+        fontName='Helvetica'
+    )
+
+    banner_table = Table([[Paragraph(f"<b>{banner_title}</b><br/>{banner_sub}", banner_style_title)]], colWidths=[520])
+    banner_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), bg_color),
+        ('BOX', (0,0), (-1,-1), 1.2, border_color),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('LEFTPADDING', (0,0), (-1,-1), 10),
+        ('RIGHTPADDING', (0,0), (-1,-1), 10),
+    ]))
+    elements.append(banner_table)
+    elements.append(Spacer(1, 8))
 
     # Seção 1: Resumo dos Dados do Negócio
     elements.append(Paragraph("📋 Resumo da Ficha de Negócio", section_heading))
@@ -456,6 +601,7 @@ def reiniciar_formulario():
     st.session_state.diferencial = ""
     st.session_state.preco_canal = ""
     st.session_state.relatorio = None
+    st.session_state.relatorio_status = "ATENCAO"
     st.rerun()
 
 # Função auxiliar para renderizar o Mascote SENAI
@@ -470,17 +616,54 @@ def renderizar_mascote(avatar_emoji, fala_texto):
 
 # --- TELA 1: EXIBIÇÃO DO RESULTADO (Se o relatório já foi gerado) ---
 if st.session_state.relatorio is not None:
+    status_atual = st.session_state.relatorio_status
+
     st.markdown("""<div class="step-card-animated">""", unsafe_allow_html=True)
-    renderizar_mascote(
-        "🏆", 
-        "Parabéns equipe! O parecer do seu negócio foi gerado pela IA do SENAI. Guarde seu resultado!"
-    )
-    st.success("✅ **Parecer de Viabilidade Concluído!**")
     
+    # 1. Configurar Mascote, Alerta Banner e Card Dinâmico com base no Status
+    if status_atual == "INVIAVEL":
+        renderizar_mascote(
+            "🤔", 
+            "Atenção equipe! O parecer da banca indicou que a proposta precisa ser substancialmente melhorada."
+        )
+        st.markdown("""
+        <div class="status-alert-inviavel">
+            ⚠️ Atenção: A proposta precisa ser melhor elaborada para ser viável.
+        </div>
+        """, unsafe_allow_html=True)
+        card_class = "result-card-inviavel"
+    elif status_atual == "VIAVEL":
+        renderizar_mascote(
+            "🏆", 
+            "Parabéns equipe! A banca técnica do SENAI aprovou o seu projeto com Alta Viabilidade!"
+        )
+        st.markdown("""
+        <div class="status-alert-viavel">
+            🎉 Parabéns! Proposta validada e com excelente potencial de mercado.
+        </div>
+        """, unsafe_allow_html=True)
+        card_class = "result-card-viavel"
+        # Disparo EXCLUSIVO de balões para propostas viáveis
+        st.balloons()
+    else:  # ATENCAO
+        renderizar_mascote(
+            "🧐", 
+            "Sua ideia possui um conceito interessante, mas necessita de atenção técnica e ajustes estruturais."
+        )
+        st.markdown("""
+        <div class="status-alert-atencao">
+            ⚡ Orientação Pedagógica: Sua proposta possui potencial, mas requer ajustes nos pontos indicados.
+        </div>
+        """, unsafe_allow_html=True)
+        card_class = "result-card-atencao"
+
+    # Card Dinâmico estilizado
+    st.markdown(f"""<div class="{card_class}">""", unsafe_allow_html=True)
     st.markdown(f"### 📋 Diagnosticando: **{st.session_state.nome_negocio}**")
     st.markdown(st.session_state.relatorio)
+    st.markdown("""</div>""", unsafe_allow_html=True)
     
-    # Gerar e disponibilizar o download do PDF em memória
+    # Gerar e disponibilizar o download do PDF em memória (sincronizado com o status)
     try:
         pdf_bytes = gerar_pdf_relatorio(
             nome_negocio=st.session_state.nome_negocio,
@@ -488,13 +671,14 @@ if st.session_state.relatorio is not None:
             cliente=st.session_state.cliente,
             diferencial=st.session_state.diferencial,
             preco=st.session_state.preco_canal,
-            relatorio_markdown=st.session_state.relatorio
+            relatorio_markdown=st.session_state.relatorio,
+            status=status_atual
         )
         st.write("")
         st.download_button(
-            label="📥 Baixar Relatório em PDF",
+            label="📥 Baixar Relatório Oficial em PDF",
             data=pdf_bytes,
-            file_name="meu_plano_de_negocio_senai.pdf",
+            file_name=f"parecer_senai_{st.session_state.nome_negocio.lower().replace(' ', '_')}.pdf",
             mime="application/pdf",
             use_container_width=True,
             type="primary"
@@ -502,8 +686,7 @@ if st.session_state.relatorio is not None:
     except Exception as pdf_err:
         st.warning(f"⚠️ Não foi possível gerar o PDF: {pdf_err}")
 
-    st.balloons()
-    st.info("💡 **Dica da oficina:** Baixe o PDF acima ou tire um print desta tela para guardar a avaliação da sua ideia!")
+    st.info("💡 **Dica da oficina:** Baixe o relatório oficial em PDF acima ou tire um print desta tela para guardar a avaliação da sua ideia!")
     
     st.markdown("---")
     if st.button("🔄 Refazer Avaliação / Novo Negócio", use_container_width=True):
@@ -706,7 +889,7 @@ else:
     # ETAPA 6: Tela de Revisão e Envio
     elif st.session_state.step == 6:
         renderizar_mascote(
-            "🎉", 
+            "📋", 
             "Excelente trabalho! Confira o resumo da sua ficha abaixo e solicite a análise da IA."
         )
 
@@ -750,7 +933,7 @@ else:
             else:
                 with st.spinner("🤖 A IA do SENAI está analisando a viabilidade do seu negócio..."):
                     try:
-                        relatorio = gerar_parecer_gemini(
+                        relatorio_raw = gerar_parecer_gemini(
                             nome_negocio=st.session_state.nome_negocio,
                             oferta_problema=st.session_state.oferta_problema,
                             cliente=st.session_state.cliente,
@@ -758,7 +941,9 @@ else:
                             preco_canal=st.session_state.preco_canal,
                             api_key_val=api_key
                         )
-                        st.session_state.relatorio = relatorio
+                        status_parsed, relatorio_limpo = extrair_status_e_limpar_relatorio(relatorio_raw)
+                        st.session_state.relatorio = relatorio_limpo
+                        st.session_state.relatorio_status = status_parsed
                         st.rerun()
                     except Exception as err:
                         st.error(f"❌ Erro ao consultar o serviço do Gemini: {err}")
